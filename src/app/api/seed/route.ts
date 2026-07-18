@@ -1,16 +1,23 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { users, students, staff, menu, mealSelections, notifications } from "@/db/schema";
+import { users, students, staff, menu, mealSelections, notifications, meals, foodItems, mealFoodItems, studentMealSelections, mealDistributionHistory } from "@/db/schema";
 import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 
 export async function POST() {
   try {
-    // Check if admin exists
-    const existing = await db.select().from(users).where(eq(users.email, "admin@messmate.com")).limit(1);
-    if (existing.length > 0) {
-      return NextResponse.json({ message: "Already seeded" });
-    }
+    // Clean existing tables in correct order of dependency
+    await db.delete(mealDistributionHistory);
+    await db.delete(studentMealSelections);
+    await db.delete(mealFoodItems);
+    await db.delete(foodItems);
+    await db.delete(meals);
+    await db.delete(mealSelections);
+    await db.delete(menu);
+    await db.delete(notifications);
+    await db.delete(students);
+    await db.delete(staff);
+    await db.delete(users);
 
     const hash = await bcrypt.hash("password123", 10);
 
@@ -64,7 +71,7 @@ export async function POST() {
       });
     }
 
-    // Create menu for today and next 7 days
+    // Create menu for past 7 days, today, and next 7 days
     const today = new Date();
     const menus = [
       { mealType: "breakfast", items: ["Poha", "Tea", "Bread Butter", "Banana"] },
@@ -84,51 +91,116 @@ export async function POST() {
       { mealType: "dinner", items: ["Butter Naan", "Shahi Paneer", "Dal Makhani", "Kheer"] },
     ];
 
-    for (let i = 0; i < 7; i++) {
+    const getFoodItemId = async (name: string) => {
+      const trimmed = name.trim();
+      const [existing] = await db.select().from(foodItems).where(eq(foodItems.name, trimmed)).limit(1);
+      if (existing) return existing.id;
+      const [inserted] = await db.insert(foodItems).values({ name: trimmed }).returning();
+      return inserted.id;
+    };
+
+    for (let i = -7; i <= 7; i++) {
       const d = new Date(today);
       d.setDate(d.getDate() + i);
       const dateStr = d.toISOString().slice(0, 10);
       const dayOfWeek = d.getDay();
 
-      const menuSet = dayOfWeek === 0 ? sundayMenus : (i % 2 === 0 ? menus : altMenus);
+      const menuSet = dayOfWeek === 0 ? sundayMenus : (Math.abs(i) % 2 === 0 ? menus : altMenus);
 
       for (const m of menuSet) {
+        // Populating legacy menu table
         await db.insert(menu).values({
           date: dateStr,
           mealType: m.mealType,
           foodItems: m.items,
           published: true,
         });
+
+        // Populating new meals table
+        const [meal] = await db.insert(meals).values({
+          date: dateStr,
+          mealType: m.mealType,
+          published: true,
+        }).returning();
+
+        // Populate food items and map them
+        for (const item of m.items) {
+          const foodItemId = await getFoodItemId(item);
+          await db.insert(mealFoodItems).values({
+            mealId: meal.id,
+            foodItemId,
+          });
+        }
       }
     }
 
-    // Create sample meal selections for today
-    const todayStr = today.toISOString().slice(0, 10);
+    // Create sample selections and servings
     const allStudents = await db.select().from(users).where(eq(users.role, "student"));
+    const headCook = staffUser;
 
-    for (const student of allStudents) {
-      await db.insert(mealSelections).values({
-        studentId: student.id,
-        date: todayStr,
-        breakfast: Math.random() > 0.3,
-        lunch: Math.random() > 0.2,
-        dinner: Math.random() > 0.25,
-      });
-    }
-
-    // Also create selections for previous days for history
-    for (let i = 1; i <= 7; i++) {
+    for (let i = -7; i <= 0; i++) {
       const d = new Date(today);
-      d.setDate(d.getDate() - i);
+      d.setDate(d.getDate() + i);
       const dateStr = d.toISOString().slice(0, 10);
+
+      // Get meals for this date
+      const dayMeals = await db.select().from(meals).where(eq(meals.date, dateStr));
+
       for (const student of allStudents) {
+        // Legacy selections
+        const legacyBreakfast = Math.random() > 0.3;
+        const legacyLunch = Math.random() > 0.2;
+        const legacyDinner = Math.random() > 0.25;
+
         await db.insert(mealSelections).values({
           studentId: student.id,
           date: dateStr,
-          breakfast: Math.random() > 0.3,
-          lunch: Math.random() > 0.2,
-          dinner: Math.random() > 0.25,
+          breakfast: legacyBreakfast,
+          lunch: legacyLunch,
+          dinner: legacyDinner,
         });
+
+        // New selections & serving history
+        for (const meal of dayMeals) {
+          const isSelected = meal.mealType === "breakfast" ? legacyBreakfast : (meal.mealType === "lunch" ? legacyLunch : legacyDinner);
+
+          if (isSelected) {
+            // Get food items for this meal
+            const linkedItems = await db.select({
+              id: foodItems.id,
+              name: foodItems.name,
+            })
+            .from(mealFoodItems)
+            .innerJoin(foodItems, eq(mealFoodItems.foodItemId, foodItems.id))
+            .where(eq(mealFoodItems.mealId, meal.id));
+
+            // Select a subset of food items (always first one, 80% for others)
+            const selectedItems = linkedItems.filter((_, idx) => idx === 0 || Math.random() > 0.2);
+
+            for (const item of selectedItems) {
+              await db.insert(studentMealSelections).values({
+                studentId: student.id,
+                mealId: meal.id,
+                foodItemId: item.id,
+              });
+            }
+
+            // In the past, randomly mark as served (80% chance)
+            if (i < 0 && Math.random() > 0.2) {
+              const servedTime = new Date(d);
+              if (meal.mealType === "breakfast") servedTime.setHours(8, Math.floor(Math.random() * 45));
+              else if (meal.mealType === "lunch") servedTime.setHours(13, Math.floor(Math.random() * 45));
+              else servedTime.setHours(20, Math.floor(Math.random() * 45));
+
+              await db.insert(mealDistributionHistory).values({
+                studentId: student.id,
+                mealId: meal.id,
+                staffId: headCook.id,
+                servedAt: servedTime,
+              });
+            }
+          }
+        }
       }
     }
 
@@ -136,7 +208,7 @@ export async function POST() {
     await db.insert(notifications).values([
       { title: "Welcome to MessMate!", message: "Your smart mess management system is now live. Select your meals daily to help reduce food waste." },
       { title: "Sunday Special Menu", message: "This Sunday: Biryani, Paneer Tikka, and Kheer! Don't forget to select your meals." },
-      { title: "Meal Selection Reminder", message: "Don't forget to select today's dinner before 5 PM." },
+      { title: "Meal Selection Checklist System Reminders", message: "Don't forget to select today's dinner before 8 PM." },
       { title: "Holiday Notice", message: "Mess will remain closed on Republic Day (26th Jan). Plan accordingly." },
     ]);
 

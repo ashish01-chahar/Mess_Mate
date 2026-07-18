@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 
 const adminNav = [
@@ -28,15 +28,21 @@ export default function MenuPage() {
   const [foods, setFoods] = useState<string[]>([]);
   const [msg, setMsg] = useState("");
 
-  useEffect(() => {
-    loadMenu();
-  }, [selectedDate]);
-
-  async function loadMenu() {
+  const loadMenu = useCallback(async () => {
     const res = await fetch(`/api/admin/menu?date=${selectedDate}`);
     const data = await res.json();
     setMenuItems(data.menu || []);
-  }
+  }, [selectedDate]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) loadMenu();
+    });
+    return () => {
+      active = false;
+    };
+  }, [loadMenu]);
 
   function addFood() {
     if (foodInput.trim()) {

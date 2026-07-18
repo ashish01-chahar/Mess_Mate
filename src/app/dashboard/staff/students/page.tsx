@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 
 const staffNav = [
   { label: "Dashboard", href: "/dashboard/staff", icon: "📊" },
+  { label: "Today's Requests", href: "/dashboard/staff/requests", icon: "📋" },
+  { label: "QR Scanner", href: "/dashboard/staff/scanner", icon: "📷" },
   { label: "Students", href: "/dashboard/staff/students", icon: "👥" },
   { label: "Reports", href: "/dashboard/staff/reports", icon: "📈" },
   { label: "Profile", href: "/dashboard/staff/profile", icon: "👤" },
@@ -26,15 +28,21 @@ export default function StaffStudentsPage() {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  useEffect(() => {
-    loadStudents();
-  }, [mealType, today]);
-
-  async function loadStudents() {
+  const loadStudents = useCallback(async () => {
     const res = await fetch(`/api/staff/students?date=${today}&mealType=${mealType}&search=`);
     const data = await res.json();
     setStudents(data.students || []);
-  }
+  }, [today, mealType]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) loadStudents();
+    });
+    return () => {
+      active = false;
+    };
+  }, [loadStudents]);
 
   async function handleServe(studentId: number) {
     setServing(studentId);

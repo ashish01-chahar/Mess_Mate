@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { mealSelections, users, mealServed } from "@/db/schema";
-import { eq, and, ilike } from "drizzle-orm";
+import { meals, studentMealSelections, users, mealDistributionHistory } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
 import { getUser } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
@@ -15,45 +15,61 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get("search") || "";
   const mealType = searchParams.get("mealType") || "lunch";
 
-  // Get all students who selected this meal
-  const selections = await db.select({
-    selectionId: mealSelections.id,
-    studentId: mealSelections.studentId,
-    breakfast: mealSelections.breakfast,
-    lunch: mealSelections.lunch,
-    dinner: mealSelections.dinner,
-    userName: users.name,
-    userEmail: users.email,
-  })
-  .from(mealSelections)
-  .innerJoin(users, eq(mealSelections.studentId, users.id))
-  .where(eq(mealSelections.date, date));
+  // Find the meal
+  const [meal] = await db
+    .select()
+    .from(meals)
+    .where(and(eq(meals.date, date), eq(meals.mealType, mealType)))
+    .limit(1);
 
-  // Filter by meal type
-  let filtered = selections.filter(s => {
-    if (mealType === "breakfast") return s.breakfast;
-    if (mealType === "lunch") return s.lunch;
-    if (mealType === "dinner") return s.dinner;
-    return false;
-  });
+  if (!meal) {
+    return NextResponse.json({ students: [] });
+  }
 
+  // Get student selections for this meal
+  const selections = await db
+    .select({
+      studentId: studentMealSelections.studentId,
+      userName: users.name,
+      userEmail: users.email,
+    })
+    .from(studentMealSelections)
+    .innerJoin(users, eq(studentMealSelections.studentId, users.id))
+    .where(eq(studentMealSelections.mealId, meal.id));
+
+  // Deduplicate students
+  const studentMap = new Map<number, { studentId: number; name: string; email: string }>();
+  for (const s of selections) {
+    studentMap.set(s.studentId, {
+      studentId: s.studentId,
+      name: s.userName,
+      email: s.userEmail,
+    });
+  }
+
+  let studentList = Array.from(studentMap.values());
+
+  // Search filter
   if (search) {
-    filtered = filtered.filter(s =>
-      s.userName.toLowerCase().includes(search.toLowerCase()) ||
-      s.userEmail.toLowerCase().includes(search.toLowerCase())
+    studentList = studentList.filter(
+      (s) =>
+        s.name.toLowerCase().includes(search.toLowerCase()) ||
+        s.email.toLowerCase().includes(search.toLowerCase())
     );
   }
 
   // Check served status
-  const served = await db.select().from(mealServed)
-    .where(and(eq(mealServed.date, date), eq(mealServed.mealType, mealType)));
+  const served = await db
+    .select()
+    .from(mealDistributionHistory)
+    .where(eq(mealDistributionHistory.mealId, meal.id));
 
-  const servedIds = new Set(served.map(s => s.studentId));
+  const servedIds = new Set(served.map((s) => s.studentId));
 
-  const result = filtered.map(s => ({
+  const result = studentList.map((s) => ({
     studentId: s.studentId,
-    name: s.userName,
-    email: s.userEmail,
+    name: s.name,
+    email: s.email,
     served: servedIds.has(s.studentId),
   }));
 

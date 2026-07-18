@@ -5,6 +5,8 @@ import DashboardLayout from "@/components/DashboardLayout";
 
 const staffNav = [
   { label: "Dashboard", href: "/dashboard/staff", icon: "📊" },
+  { label: "Today's Requests", href: "/dashboard/staff/requests", icon: "📋" },
+  { label: "QR Scanner", href: "/dashboard/staff/scanner", icon: "📷" },
   { label: "Students", href: "/dashboard/staff/students", icon: "👥" },
   { label: "Reports", href: "/dashboard/staff/reports", icon: "📈" },
   { label: "Profile", href: "/dashboard/staff/profile", icon: "👤" },

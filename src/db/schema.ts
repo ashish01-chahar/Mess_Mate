@@ -86,3 +86,39 @@ export const holidays = pgTable("holidays", {
   reason: varchar("reason", { length: 255 }).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+export const meals = pgTable("meals", {
+  id: serial("id").primaryKey(),
+  date: date("date").notNull(),
+  mealType: varchar("meal_type", { length: 20 }).notNull(), // breakfast, lunch, dinner
+  published: boolean("published").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const foodItems = pgTable("food_items", {
+  id: serial("id").primaryKey(),
+  name: varchar("name", { length: 255 }).notNull().unique(),
+});
+
+export const mealFoodItems = pgTable("meal_food_items", {
+  id: serial("id").primaryKey(),
+  mealId: integer("meal_id").references(() => meals.id, { onDelete: "cascade" }).notNull(),
+  foodItemId: integer("food_item_id").references(() => foodItems.id, { onDelete: "cascade" }).notNull(),
+});
+
+export const studentMealSelections = pgTable("student_meal_selections", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  mealId: integer("meal_id").references(() => meals.id, { onDelete: "cascade" }).notNull(),
+  foodItemId: integer("food_item_id").references(() => foodItems.id, { onDelete: "cascade" }).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const mealDistributionHistory = pgTable("meal_distribution_history", {
+  id: serial("id").primaryKey(),
+  studentId: integer("student_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+  mealId: integer("meal_id").references(() => meals.id, { onDelete: "cascade" }).notNull(),
+  servedAt: timestamp("served_at").defaultNow().notNull(),
+  staffId: integer("staff_id").references(() => users.id).notNull(),
+});
+

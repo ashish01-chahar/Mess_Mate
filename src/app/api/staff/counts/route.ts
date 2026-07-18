@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { mealSelections, mealServed } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { meals, studentMealSelections, mealDistributionHistory } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
 import { getUser } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
@@ -13,19 +13,44 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const date = searchParams.get("date") || new Date().toISOString().slice(0, 10);
 
-  const selections = await db.select().from(mealSelections)
-    .where(eq(mealSelections.date, date));
+  // Get student selections counts for this date
+  const selections = await db
+    .select({
+      studentId: studentMealSelections.studentId,
+      mealType: meals.mealType,
+    })
+    .from(studentMealSelections)
+    .innerJoin(meals, eq(studentMealSelections.mealId, meals.id))
+    .where(eq(meals.date, date));
 
-  const served = await db.select().from(mealServed)
-    .where(eq(mealServed.date, date));
+  const uniqueSels: Record<string, Set<number>> = {
+    breakfast: new Set(),
+    lunch: new Set(),
+    dinner: new Set(),
+  };
 
-  const breakfastCount = selections.filter(s => s.breakfast).length;
-  const lunchCount = selections.filter(s => s.lunch).length;
-  const dinnerCount = selections.filter(s => s.dinner).length;
+  for (const s of selections) {
+    if (uniqueSels[s.mealType]) {
+      uniqueSels[s.mealType].add(s.studentId);
+    }
+  }
 
-  const servedBreakfast = served.filter(s => s.mealType === "breakfast").length;
-  const servedLunch = served.filter(s => s.mealType === "lunch").length;
-  const servedDinner = served.filter(s => s.mealType === "dinner").length;
+  const breakfastCount = uniqueSels.breakfast.size;
+  const lunchCount = uniqueSels.lunch.size;
+  const dinnerCount = uniqueSels.dinner.size;
+
+  // Get served counts for this date
+  const served = await db
+    .select({
+      mealType: meals.mealType,
+    })
+    .from(mealDistributionHistory)
+    .innerJoin(meals, eq(mealDistributionHistory.mealId, meals.id))
+    .where(eq(meals.date, date));
+
+  const servedBreakfast = served.filter((s) => s.mealType === "breakfast").length;
+  const servedLunch = served.filter((s) => s.mealType === "lunch").length;
+  const servedDinner = served.filter((s) => s.mealType === "dinner").length;
 
   return NextResponse.json({
     date,

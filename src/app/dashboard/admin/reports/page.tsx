@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import dynamic from "next/dynamic";
 
@@ -35,23 +35,31 @@ export default function ReportsPage() {
   const [rangeReports, setRangeReports] = useState<DailyReport[]>([]);
   const [totalStudents, setTotalStudents] = useState(0);
 
-  useEffect(() => {
-    if (mode === "daily") loadDaily();
-    else loadRange();
-  }, [mode, date, from, to]);
-
-  async function loadDaily() {
+  const loadDaily = useCallback(async () => {
     const res = await fetch(`/api/admin/reports?date=${date}`);
     const data = await res.json();
     setDailyReport(data.report || null);
-  }
+  }, [date]);
 
-  async function loadRange() {
+  const loadRange = useCallback(async () => {
     const res = await fetch(`/api/admin/reports?from=${from}&to=${to}`);
     const data = await res.json();
     setRangeReports(data.reports || []);
     setTotalStudents(data.totalStudents || 0);
-  }
+  }, [from, to]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => {
+      if (active) {
+        if (mode === "daily") loadDaily();
+        else loadRange();
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [mode, loadDaily, loadRange]);
 
   return (
     <DashboardLayout role="admin" navItems={adminNav}>
